@@ -1,0 +1,14 @@
+[package]
+name = "map_placer"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+veloren-common = {git = "https://gitlab.com/veloren/dev/veloren", branch = "isse/vox-spawn" }
+veloren-server = {git = "https://gitlab.com/veloren/dev/veloren", branch = "isse/vox-spawn" }
+dot_vox = { git = "https://github.com/davidedmonds/dot_vox", rev = "34c445cf7fd52c83d24e00d32366119d7a5928dc" }
+serde = { version = "1.0.60", features = ["serde_derive"] }
+vek = "0.15.8"
+rand = "0.8.5"
