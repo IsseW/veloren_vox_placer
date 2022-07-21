@@ -67,7 +67,8 @@ impl SparseScene {
                 });
             aabbs.push(Aabb {
                 min: pos,
-                max: pos + size.map(|e| e as i32),
+                // vek Aabbs are inclusive
+                max: pos + size.map(|e| e as i32) - 1,
             });
             // dbg!(pos);
             // Insert required chunks
