@@ -304,9 +304,9 @@ fn main() {
                             b: 0,
                         } => Block::air(SpriteKind::CookingPot),
                         Rgb::<u8> {
-                            r: 63,
-                            g: 96,
-                            b: 12,
+                            r: 0,
+                            g: 156,
+                            b: 7,
                         } => {
                             if rand::thread_rng().gen_bool(0.5) {
                                 Block::air(SpriteKind::JungleRedGrass)
