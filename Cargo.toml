@@ -12,3 +12,4 @@ dot_vox = { git = "https://github.com/davidedmonds/dot_vox", rev = "34c445cf7fd5
 serde = { version = "1.0.60", features = ["serde_derive"] }
 vek = "0.15.8"
 rand = "0.8.5"
+assets_manager = "*"

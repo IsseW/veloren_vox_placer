@@ -1,14 +1,19 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+};
 
 use dot_vox::{DotVoxData, Model};
-use rand::Rng;
-use serde::{Deserialize, Serialize};
+use rand::{thread_rng, Rng};
+use serde::Deserialize;
 use vek::*;
 use veloren_common::{
     assets::{Asset, AssetExt, AssetHandle, DotVoxAsset, RonLoader},
     figure::Cell,
-    vol::{VolSize, Vox, WriteVol, IntoFullVolIterator},
-    volumes::{chunk::Chunk, vol_grid_3d::VolGrid3d}, terrain::{SpriteKind, Block, BlockKind},
+    lottery::Lottery,
+    terrain::{Block, BlockKind, SpriteKind},
+    vol::{IntoFullVolIterator, VolSize, Vox, WriteVol},
+    volumes::{chunk::Chunk, vol_grid_3d::VolGrid3d},
 };
 use veloren_server::terrain_persistence::TerrainPersistence;
 
@@ -37,17 +42,7 @@ impl DerefMut for SparseScene {
 }
 
 impl SparseScene {
-    pub fn new_from(dot_vox_data: &DotVoxData, offset: Vec3<i32>) -> (Self, Vec<Aabb<i32>>) {
-        let mut sparse_scene = SparseScene(match VolGrid3d::new() {
-            Ok(ok) => ok,
-            Err(_) => panic!(),
-        });
-        let mut aabbs = Vec::new();
-        let palette = dot_vox_data
-            .palette
-            .iter()
-            .map(|col| Rgba::from(col.to_ne_bytes()).into())
-            .collect::<Vec<_>>();
+    pub fn new_from<'a>(dot_vox_data: impl Iterator<Item = (assets_manager::AssetGuard<'a, DotVoxAsset>, Vec3<i32>)>) -> (Self, Vec<Aabb<i32>>) {
         fn render_model(
             palette: &Vec<Rgb<u8>>,
             model: &Model,
@@ -65,11 +60,23 @@ impl SparseScene {
                 .map2(rot * Vec3::<i32>::one(), |(s, m), f| {
                     m - (s as i32 + f.min(0) * -1) / 2
                 });
-            aabbs.push(Aabb {
+            let model_bounds = Aabb {
                 min: pos,
                 // vek Aabbs are inclusive
                 max: pos + size.map(|e| e as i32) - 1,
-            });
+            };
+            if !aabbs.iter_mut().any(|aabb| {
+                (if model_bounds.contains_aabb(*aabb) {
+                    *aabb = model_bounds;
+                    true
+                } else {
+                    false
+                })
+                ||
+                aabb.contains_aabb(model_bounds)
+            }) {
+                aabbs.push(model_bounds);
+            }
             // dbg!(pos);
             // Insert required chunks
             let min_key = sparse_scene.pos_key(pos);
@@ -197,27 +204,78 @@ impl SparseScene {
             }
         }
 
-        // Zero is always the root node.
-        insert_scene(
-            dot_vox_data,
-            &palette,
-            0,
-            Mat3::identity(),
-            offset,
-            &mut sparse_scene,
-            &mut aabbs,
-        );
+        let mut sparse_scene = SparseScene(match VolGrid3d::new() {
+            Ok(ok) => ok,
+            Err(_) => panic!(),
+        });
+        let mut aabbs = Vec::new();
+        for (dot_vox_data, offset) in dot_vox_data {
+            let palette = dot_vox_data.0
+                .palette
+                .iter()
+                .map(|col| Rgba::from(col.to_ne_bytes()).into())
+                .collect::<Vec<_>>();
+            // Zero is always the root node.
+            insert_scene(
+                &dot_vox_data.0,
+                &palette,
+                0,
+                Mat3::identity(),
+                offset,
+                &mut sparse_scene,
+                &mut aabbs,
+            );
+        }
 
         (sparse_scene, aabbs)
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize, Default, Clone, Copy)]
+enum Medium {
+    #[default]
+    Air,
+    Water,
+}
+
+#[derive(Deserialize, Clone)]
+enum BlockSpec {
+    Sprite {
+        kind: SpriteKind,
+        #[serde(default)]
+        medium: Medium,
+    },
+    Block {
+        kind: BlockKind,
+        #[serde(default)]
+        color: [u8; 3],
+    },
+    Random(Lottery<BlockSpec>),
+}
+
+impl BlockSpec {
+    fn get_block(&self, rng: &mut impl Rng) -> Block {
+        match self {
+            BlockSpec::Sprite { kind, medium } => match medium {
+                Medium::Air => Block::air(*kind),
+                Medium::Water => Block::water(*kind),
+            },
+            BlockSpec::Block { kind, color } => Block::new(*kind, Rgb::from(*color)),
+            BlockSpec::Random(lottery) => lottery.choose_seeded(rng.gen()).get_block(rng),
+        }
+    }
+}
+
+#[derive(Deserialize)]
 struct VoxSpec(String, [i32; 3]);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct PlaceSpec {
     pieces: Vec<VoxSpec>,
+    #[serde(default)]
+    replace: Vec<([u8; 3], BlockSpec)>,
+    #[serde(default)]
+    fill_empty: bool,
 }
 
 impl PlaceSpec {
@@ -225,7 +283,12 @@ impl PlaceSpec {
     //     PlaceSpec::load("place")
     // }
 
-    pub fn build_place(&self) -> ((SparseScene, Vec<Aabb<i32>>), Vec3<i32>) {
+    pub fn build_place(
+        &self,
+    ) -> (
+        (SparseScene, Vec<Aabb<i32>>),
+        Vec3<i32>,
+    ) {
         // TODO add sparse scene combination
         //use common::figure::{DynaUnionizer, Segment};
         fn graceful_load_vox(name: &str) -> AssetHandle<DotVoxAsset> {
@@ -243,16 +306,16 @@ impl PlaceSpec {
         // indicator).as_ref());    unionizer = unionizer.add(seg,
         // (*offset).into());
         //}
-        
+
         //unionizer.unify()
-        let hack = "asset that doesn't exist";
         (
-            match self.pieces.get(0) {
-                Some(VoxSpec(specifier, offset)) => {
-                    SparseScene::new_from(&graceful_load_vox(&specifier).read().0, Vec3::from(*offset))
-                }
-                None => SparseScene::new_from(&graceful_load_vox(&hack).read().0, Vec3::zero()),
-            },
+            SparseScene::new_from(
+                self.pieces.iter().map(|spec| {
+                    let vox = graceful_load_vox(&spec.0).read();
+                    let offset = Vec3::<i32>::from(spec.1);
+                    (vox, offset)
+                })
+            ),
             Vec3::zero(),
         )
     }
@@ -266,65 +329,27 @@ impl Asset for PlaceSpec {
 
 fn main() {
     let mut persistance = TerrainPersistence::new("./terrain/".into());
-
-    let (vox, aabbs) = PlaceSpec::load_expect("place").read().build_place().0;
+    let mut rng = thread_rng();
+    let place_spec = PlaceSpec::load_expect("place").read();
+    let ((vox, aabbs), _) = place_spec.build_place();
+    let replace_map = place_spec.replace.iter().map(|(color, block)| (Rgb::from(*color), block.clone())).collect::<HashMap<_, _>>();
     for (key, chunk) in vox.iter() {
         println!("Filling chunk {}", key);
         for (pos, cell) in chunk.full_vol_iter() {
             let wpos = vox.key_pos(key) + pos;
-            if !aabbs.iter().any(|aabb| aabb.contains_point(wpos)) {
+            if place_spec.fill_empty {
+                if !aabbs.iter().any(|aabb| aabb.contains_point(pos)) {
+                    continue;
+                }
+            } else if cell.is_empty() {
                 continue;
             }
-            match cell.get_color() {
+            let block = match cell.get_color() {
                 Some(color) => {
-                    let block = match color {
-                        Rgb::<u8> {
-                            r: 4,
-                            g: 119,
-                            b: 191,
-                        } => Block::new(BlockKind::Water, Rgb::default()),
-                        Rgb::<u8> {
-                            r: 170,
-                            g: 56,
-                            b: 56,
-                        } => Block::new(BlockKind::Lava, Rgb::new(255, 65, 0)),
-                        Rgb::<u8> {
-                            r: 243,
-                            g: 255,
-                            b: 113,
-                        } => Block::air(SpriteKind::StreetLamp),
-                        Rgb::<u8> {
-                            r: 0,
-                            g: 200,
-                            b: 80,
-                        } => Block::air(SpriteKind::Liana),
-                        Rgb::<u8> {
-                            r: 191,
-                            g: 255,
-                            b: 0,
-                        } => Block::air(SpriteKind::CookingPot),
-                        Rgb::<u8> {
-                            r: 0,
-                            g: 156,
-                            b: 7,
-                        } => {
-                            if rand::thread_rng().gen_bool(0.5) {
-                                Block::air(SpriteKind::JungleRedGrass)
-                            } else {
-                                Block::air(SpriteKind::JungleFern)
-                            }
-                        }
-                        Rgb::<u8> {
-                            r: 144,
-                            g: 31,
-                            b: 31,
-                        } => Block::air(SpriteKind::DungeonChest4),
-                        Rgb::<u8> {
-                            r: 194,
-                            g: 231,
-                            b: 147,
-                        } => Block::air(SpriteKind::FireBowlGround),
-                        _ => {
+                    replace_map
+                        .get(&color)
+                        .map(|spec| spec.get_block(&mut rng))
+                        .unwrap_or_else(|| {
                             if cell.is_hollow() {
                                 Block::air(SpriteKind::Empty)
                             } else if cell.is_glowy() {
@@ -334,14 +359,13 @@ fn main() {
                             } else {
                                 Block::new(BlockKind::Misc, color)
                             }
-                        }
-                    };
-                    persistance.set_block(wpos, block);
+                        })
                 }
                 None => {
-                    persistance.set_block(wpos, Block::empty());
+                    Block::empty()
                 }
-            }
+            };
+            persistance.set_block(wpos, block);
         }
     }
 

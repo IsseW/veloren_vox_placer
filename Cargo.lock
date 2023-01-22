@@ -1334,6 +1334,7 @@ dependencies = [
 name = "map_placer"
 version = "0.1.0"
 dependencies = [
+ "assets_manager",
  "dot_vox",
  "rand 0.8.5",
  "serde",
