@@ -118,52 +118,26 @@ impl SparseScene {
             sparse_scene: &mut SparseScene,
             aabbs: &mut Vec<Aabb<i32>>,
         ) {
-            let scene = dot_vox_data.scene.get(scene as usize).unwrap();
+            let scene = dot_vox_data.scenes.get(scene as usize).unwrap();
             match scene {
                 dot_vox::SceneNode::Transform { frames, child, .. } => {
                     if let Some(frame) = frames.get(0) {
                         let t = frame
-                            .get("_t")
+                            .position()
                             .and_then(|t| {
-                                let mut elements = t.split(' ').map(|e| e.parse::<i32>().ok());
                                 Some(Vec3::new(
-                                    elements.next()??,
-                                    elements.next()??,
-                                    elements.next()??,
+                                    t.x,
+                                    t.y,
+                                    t.z,
                                 ))
                             })
                             .unwrap_or_default();
 
                         let r = frame
-                            .get("_r")
-                            .and_then(|r| {
-                                let n = r.parse::<u8>().ok()?;
-                                let signs = [
-                                    if n >> 4 & 1 == 0 { 1 } else { -1 },
-                                    if n >> 5 & 1 == 0 { 1 } else { -1 },
-                                    if n >> 6 & 1 == 0 { 1 } else { -1 },
-                                ];
-                                let rows = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
-                                if n & 3 != 3 && n >> 2 != 3 {
-                                    let r1 = rows[(n & 3) as usize];
-                                    let r2 = rows[(n >> 2 & 3) as usize];
-                                    let r3 = rows[(!(n | (n >> 2)) & 3) as usize];
-
-                                    Some(Mat3::new(
-                                        r1[0] * signs[0],
-                                        r1[1] * signs[0],
-                                        r1[2] * signs[0],
-                                        r2[0] * signs[1],
-                                        r2[1] * signs[1],
-                                        r2[2] * signs[1],
-                                        r3[0] * signs[2],
-                                        r3[1] * signs[2],
-                                        r3[2] * signs[2],
-                                    ))
-                                } else {
-                                    // Unknown format
-                                    None
-                                }
+                            .orientation()
+                            .map(|r| {
+                                let arr = r.to_cols_array_2d();
+                                Mat3::from_col_arrays(arr).map(|f| f as i32)
                             })
                             .unwrap_or(Mat3::identity());
 
@@ -213,7 +187,7 @@ impl SparseScene {
             let palette = dot_vox_data.0
                 .palette
                 .iter()
-                .map(|col| Rgba::from(col.to_ne_bytes()).into())
+                .map(|col| Rgb::new(col.r, col.g, col.b))
                 .collect::<Vec<_>>();
             // Zero is always the root node.
             insert_scene(
