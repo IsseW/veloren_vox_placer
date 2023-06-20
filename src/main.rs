@@ -12,7 +12,7 @@ use veloren_common::{
     figure::Cell,
     lottery::Lottery,
     terrain::{Block, BlockKind, SpriteKind},
-    vol::{IntoFullVolIterator, VolSize, Vox, WriteVol},
+    vol::{IntoFullVolIterator, VolSize, WriteVol},
     volumes::{chunk::Chunk, vol_grid_3d::VolGrid3d},
 };
 use veloren_server::terrain_persistence::TerrainPersistence;
@@ -42,7 +42,9 @@ impl DerefMut for SparseScene {
 }
 
 impl SparseScene {
-    pub fn new_from<'a>(dot_vox_data: impl Iterator<Item = (assets_manager::AssetGuard<'a, DotVoxAsset>, Vec3<i32>)>) -> (Self, Vec<Aabb<i32>>) {
+    pub fn new_from<'a>(
+        dot_vox_data: impl Iterator<Item = (assets_manager::AssetGuard<'a, DotVoxAsset>, Vec3<i32>)>,
+    ) -> (Self, Vec<Aabb<i32>>) {
         fn render_model(
             palette: &Vec<Rgb<u8>>,
             model: &Model,
@@ -71,9 +73,7 @@ impl SparseScene {
                     true
                 } else {
                     false
-                })
-                ||
-                aabb.contains_aabb(model_bounds)
+                }) || aabb.contains_aabb(model_bounds)
             }) {
                 aabbs.push(model_bounds);
             }
@@ -87,7 +87,7 @@ impl SparseScene {
                         let key = Vec3::new(x, y, z);
                         if sparse_scene.get_key_arc(key).is_none() {
                             sparse_scene
-                                .insert(key, std::sync::Arc::new(Chunk::filled(Cell::empty(), ())));
+                                .insert(key, std::sync::Arc::new(Chunk::filled(Cell::Empty, ())));
                         }
                     }
                 }
@@ -124,13 +124,7 @@ impl SparseScene {
                     if let Some(frame) = frames.get(0) {
                         let t = frame
                             .position()
-                            .and_then(|t| {
-                                Some(Vec3::new(
-                                    t.x,
-                                    t.y,
-                                    t.z,
-                                ))
-                            })
+                            .and_then(|t| Some(Vec3::new(t.x, t.y, t.z)))
                             .unwrap_or_default();
 
                         let r = frame
@@ -184,7 +178,8 @@ impl SparseScene {
         });
         let mut aabbs = Vec::new();
         for (dot_vox_data, offset) in dot_vox_data {
-            let palette = dot_vox_data.0
+            let palette = dot_vox_data
+                .0
                 .palette
                 .iter()
                 .map(|col| Rgb::new(col.r, col.g, col.b))
@@ -257,12 +252,7 @@ impl PlaceSpec {
     //     PlaceSpec::load("place")
     // }
 
-    pub fn build_place(
-        &self,
-    ) -> (
-        (SparseScene, Vec<Aabb<i32>>),
-        Vec3<i32>,
-    ) {
+    pub fn build_place(&self) -> ((SparseScene, Vec<Aabb<i32>>), Vec3<i32>) {
         // TODO add sparse scene combination
         //use common::figure::{DynaUnionizer, Segment};
         fn graceful_load_vox(name: &str) -> AssetHandle<DotVoxAsset> {
@@ -283,13 +273,11 @@ impl PlaceSpec {
 
         //unionizer.unify()
         (
-            SparseScene::new_from(
-                self.pieces.iter().map(|spec| {
-                    let vox = graceful_load_vox(&spec.0).read();
-                    let offset = Vec3::<i32>::from(spec.1);
-                    (vox, offset)
-                })
-            ),
+            SparseScene::new_from(self.pieces.iter().map(|spec| {
+                let vox = graceful_load_vox(&spec.0).read();
+                let offset = Vec3::<i32>::from(spec.1);
+                (vox, offset)
+            })),
             Vec3::zero(),
         )
     }
@@ -306,7 +294,11 @@ fn main() {
     let mut rng = thread_rng();
     let place_spec = PlaceSpec::load_expect("place").read();
     let ((vox, aabbs), _) = place_spec.build_place();
-    let replace_map = place_spec.replace.iter().map(|(color, block)| (Rgb::from(*color), block.clone())).collect::<HashMap<_, _>>();
+    let replace_map = place_spec
+        .replace
+        .iter()
+        .map(|(color, block)| (Rgb::from(*color), block.clone()))
+        .collect::<HashMap<_, _>>();
     for (key, chunk) in vox.iter() {
         println!("Filling chunk {}", key);
         for (pos, cell) in chunk.full_vol_iter() {
@@ -315,29 +307,25 @@ fn main() {
                 if !aabbs.iter().any(|aabb| aabb.contains_point(pos)) {
                     continue;
                 }
-            } else if cell.is_empty() {
+            } else if matches!(cell, Cell::Empty) {
                 continue;
             }
             let block = match cell.get_color() {
-                Some(color) => {
-                    replace_map
-                        .get(&color)
-                        .map(|spec| spec.get_block(&mut rng))
-                        .unwrap_or_else(|| {
-                            if cell.is_hollow() {
-                                Block::air(SpriteKind::Empty)
-                            } else if cell.is_glowy() {
-                                Block::new(BlockKind::GlowingRock, color)
-                            } else if cell.is_shiny() {
-                                Block::water(SpriteKind::Empty)
-                            } else {
-                                Block::new(BlockKind::Misc, color)
-                            }
-                        })
-                }
-                None => {
-                    Block::empty()
-                }
+                Some(color) => replace_map
+                    .get(&color)
+                    .map(|spec| spec.get_block(&mut rng))
+                    .unwrap_or_else(|| {
+                        if cell.is_hollow() {
+                            Block::air(SpriteKind::Empty)
+                        } else if cell.is_glowy() {
+                            Block::new(BlockKind::GlowingRock, color)
+                        } else if cell.is_shiny() {
+                            Block::water(SpriteKind::Empty)
+                        } else {
+                            Block::new(BlockKind::Misc, color)
+                        }
+                    }),
+                None => Block::empty(),
             };
             persistance.set_block(wpos, block);
         }
