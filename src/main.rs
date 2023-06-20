@@ -304,7 +304,7 @@ fn main() {
         for (pos, cell) in chunk.full_vol_iter() {
             let wpos = vox.key_pos(key) + pos;
             if place_spec.fill_empty {
-                if !aabbs.iter().any(|aabb| aabb.contains_point(pos)) {
+                if !aabbs.iter().any(|aabb| aabb.contains_point(wpos)) {
                     continue;
                 }
             } else if matches!(cell, Cell::Empty) {
