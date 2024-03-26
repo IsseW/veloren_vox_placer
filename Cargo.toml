@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[patch.crates-io]
+shred = { git = "https://github.com/amethyst/shred.git", rev = "5d52c6fc390dd04c12158633e77591f6523d1f85" }
 
 [dependencies]
-veloren-common = {git = "https://gitlab.com/veloren/dev/veloren" }
-veloren-server = {git = "https://gitlab.com/veloren/dev/veloren" }
+veloren-common = { git = "https://gitlab.com/veloren/dev/veloren" }
+veloren-server = { git = "https://gitlab.com/veloren/dev/veloren", default-features = false, features = ["worldgen", "persistent_world"] }
 dot_vox = "5.1.0"
 serde = { version = "1.0", features = ["serde_derive"] }
-vek = "0.15.9"
+vek = { version = "0.16.1", features = ["serde"] }
 rand = "0.8.5"
-assets_manager = "*"
+assets_manager = "0.11"
