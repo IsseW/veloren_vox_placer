@@ -43,7 +43,7 @@ impl DerefMut for SparseScene {
 
 impl SparseScene {
     pub fn new_from<'a>(
-        dot_vox_data: impl Iterator<Item = (assets_manager::AssetGuard<'a, DotVoxAsset>, Vec3<i32>)>,
+        dot_vox_data: impl Iterator<Item = (assets_manager::AssetReadGuard<'a, DotVoxAsset>, Vec3<i32>)>,
     ) -> (Self, Vec<Aabb<i32>>) {
         fn render_model(
             palette: &Vec<Rgb<u8>>,
